@@ -1,0 +1,169 @@
+# Importing required Packages
+from pyspark.sql.functions import *
+from datetime import *
+spark.sql("set spark.sql.legacy.timeParserPolicy=LEGACY")
+
+df1 = (sc.parallelize([["pos1", "bangalore", "newyork", "cabin1", "2020-01-28 05:02:11.0", "2020-11-28 05:02:11"], 
+                       ["pos2", "chennai", "chicago", "cabin2", "2020-02-1", "2020-08-2"],
+                       ["pos3", "newyork", "chennai", "cabin3", "2020-02-30 05:02:11", "2020-10-28 05:02:11"],
+                       ["pos4", "chicago", "bangalore", "cabin4", "2020-12-02 05:02:11", "2020-01-31 05:02:11"],
+                       ["pos5", "india", "chicago", "cabin5", None, None],
+                       ["pos6", "chennai", "usa", "cabin6", "2019-02-01 05:02:11", "2019-02-29 05:02:11"]
+                       
+                       ])
+       
+       .toDF(("POS", "ORIGIN", "DEST", "Cabin", "Start_date", "End_date"))
+      )
+
+df1.show()
++----+---------+---------+------+--------------------+-------------------+
+| POS|   ORIGIN|     DEST| Cabin|          Start_date|           End_date|
++----+---------+---------+------+--------------------+-------------------+
+|pos1|bangalore|  newyork|cabin1|2020-01-28 05:02:...|2020-11-28 05:02:11|
+|pos2|  chennai|  chicago|cabin2|           2020-02-1|          2020-08-2|
+|pos3|  newyork|  chennai|cabin3| 2020-02-30 05:02:11|2020-10-28 05:02:11|
+|pos4|  chicago|bangalore|cabin4| 2020-12-02 05:02:11|2020-01-31 05:02:11|
+|pos5|    india|  chicago|cabin5|                null|               null|
+|pos6|  chennai|      usa|cabin6| 2019-02-01 05:02:11|2019-02-29 05:02:11|
++----+---------+---------+------+--------------------+-------------------+
+
+# To correct <10, Null dates and Invalid Dates
+from datetime import date
+
+Year_Start_Date = date(date.today().year, 1, 1)
+Year_End_Date = date(date.today().year, 12, 31)
+
+def invs_date(a):
+  x=when(length(a)<10,Year_Start_Date).when(isnull(a),Year_Start_Date).when(to_date(a,'yyy-MM-dd').isNull(),add_months(date_add(to_date(a,'yyy-MM'),-1),1)).otherwise(to_date(a,'yyy-MM-dd'))
+  return x
+def inve_date(b):
+  y=when(length(b)<10,Year_End_Date).when(isnull(b),Year_End_Date).when(to_date(b,'yyy-MM-dd').isNull(),add_months(date_add(to_date(b,'yyy-MM'),-1),1)).otherwise(to_date(b,'yyy-MM-dd'))
+  return y 
+
+
+df2 = (df1.select('pos','origin','dest','cabin','Start_date','End_date',invs_date('Start_date').alias('Start_date1'),inve_date('End_date').alias('End_date1')))
+
+df2.show()
++----+---------+---------+------+--------------------+-------------------+-----------+----------+
+| pos|   origin|     dest| cabin|          Start_date|           End_date|Start_date1| End_date1|
++----+---------+---------+------+--------------------+-------------------+-----------+----------+
+|pos1|bangalore|  newyork|cabin1|2020-01-28 05:02:...|2020-11-28 05:02:11| 2020-01-28|2020-11-28|
+|pos2|  chennai|  chicago|cabin2|           2020-02-1|          2020-08-2| 2020-01-01|2020-12-31|
+|pos3|  newyork|  chennai|cabin3| 2020-02-30 05:02:11|2020-10-28 05:02:11| 2020-02-29|2020-10-28|
+|pos4|  chicago|bangalore|cabin4| 2020-12-02 05:02:11|2020-01-31 05:02:11| 2020-12-02|2020-01-31|
+|pos5|    india|  chicago|cabin5|                null|               null| 2020-01-01|2020-12-31|
+|pos6|  chennai|      usa|cabin6| 2019-02-01 05:02:11|2019-02-29 05:02:11| 2019-02-01|2019-02-28|
++----+---------+---------+------+--------------------+-------------------+-----------+----------+
+
+df2.createOrReplaceTempView("tabx")
+
+#Season validation
+df3 = (spark.sql(""" select  POS,origin,dest,cabin,Start_date,End_date,start_date1,end_date1,
+                                                   case  when Start_date1 < current_date() and End_date1 > current_date() then start_date1
+                                                         when start_date1< current_date() and end_date1 < current_date()  then add_months(start_date1,12)
+                                                         else start_date1
+                                                         end Start_date2,
+                                                   case  when Start_date1<current_date() and End_date1 > current_date() then end_date1
+                                                         when start_date1<current_date() and end_date1<current_date()  then add_months(end_date1,12)
+                                                         when start_date1>end_date1 then add_months(end_date1,12)
+                                                         else end_date1
+                                                         end End_date2
+                                                         
+from tabx """))
+
+df3.show()
++----+---------+---------+------+--------------------+-------------------+-----------+----------+-----------+----------+
+| POS|   origin|     dest| cabin|          Start_date|           End_date|start_date1| end_date1|Start_date2| End_date2|
++----+---------+---------+------+--------------------+-------------------+-----------+----------+-----------+----------+
+|pos1|bangalore|  newyork|cabin1|2020-01-28 05:02:...|2020-11-28 05:02:11| 2020-01-28|2020-11-28| 2020-01-28|2020-11-28|
+|pos2|  chennai|  chicago|cabin2|           2020-02-1|          2020-08-2| 2020-01-01|2020-12-31| 2020-01-01|2020-12-31|
+|pos3|  newyork|  chennai|cabin3| 2020-02-30 05:02:11|2020-10-28 05:02:11| 2020-02-29|2020-10-28| 2020-02-29|2020-10-28|
+|pos4|  chicago|bangalore|cabin4| 2020-12-02 05:02:11|2020-01-31 05:02:11| 2020-12-02|2020-01-31| 2020-12-02|2021-01-31|
+|pos5|    india|  chicago|cabin5|                null|               null| 2020-01-01|2020-12-31| 2020-01-01|2020-12-31|
+|pos6|  chennai|      usa|cabin6| 2019-02-01 05:02:11|2019-02-29 05:02:11| 2019-02-01|2019-02-28| 2020-02-01|2020-02-29|
++----+---------+---------+------+--------------------+-------------------+-----------+----------+-----------+----------+
+
+
+df3.createOrReplaceTempView("taby")
+
+#366 days validation
+df4 = spark.sql(""" select POS,origin,dest,cabin,Start_date2 vals_date,
+case when datediff(End_date2 , current_date()) > 366 then date_add(current_date(),366)
+else End_date2 
+end vale_date from taby """)
+
+
+df4.show() # Cleaned Seasonality Table
++----+---------+---------+------+----------+----------+
+| POS|   origin|     dest| cabin| vals_date| vale_date|
++----+---------+---------+------+----------+----------+
+|pos1|bangalore|  newyork|cabin1|2020-01-28|2020-11-28|
+|pos2|  chennai|  chicago|cabin2|2020-01-01|2020-12-31|
+|pos3|  newyork|  chennai|cabin3|2020-02-29|2020-10-28|
+|pos4|  chicago|bangalore|cabin4|2020-12-02|2021-01-31|
+|pos5|    india|  chicago|cabin5|2020-01-01|2020-12-31|
+|pos6|  chennai|      usa|cabin6|2020-02-01|2020-02-29|
++----+---------+---------+------+----------+----------+
+
+# Airport Mapping Table with countries & Cities
+Airport_Mapping = spark.table("m3") 
+Airport_Mapping.show()
+
++-------+--------+----+
+|country|    city| POS|
++-------+--------+----+
+|  india| chennai|pos1|
+|  india|banglore|pos2|
+|    usa| chicago|pos3|
+|    usa| newyork|pos4|
+|  india|   delhi|pos5|
+|    usa|      DC|pos6|
++-------+--------+----+
+df4.createOrReplaceTempView("sss")#Seasonality Table 
+
+# update Countries in ORGIN or DEST into Cities into seasonality temp table
+df5= spark.sql("""select pos,
+  if(isnull(ocity), origin, ocity)as origin, 
+  if (isnull(dcity),dest, dcity) as DEST,
+  cabin,vals_date,vale_date
+from 
+(select m3.city ocity, sss.origin, sss.dest, B.city as dcity,sss.pos,sss.cabin,sss.vals_date,sss.vale_date 
+from 
+sss left join m3 
+on
+sss.origin = m3.country 
+left join m3 B 
+on sss.dest = B.country) A
+               """)
+  
+
+# Airport Mapping Table with countries & Cities
+Airport_Mapping = spark.table("m3") 
+Airport_Mapping.show()
+
++-------+--------+----+
+|country|    city| POS|
++-------+--------+----+
+|  india| chennai|pos1|
+|  india|banglore|pos2|
+|    usa| chicago|pos3|
+|    usa| newyork|pos4|
+|  india|   delhi|pos5|
+|    usa|      DC|pos6|
++-------+--------+----+
+
+df5.show()# Final Output 
++----+---------+---------+------+----------+----------+
+| pos|   origin|     DEST| cabin| vals_date| vale_date|
++----+---------+---------+------+----------+----------+
+|pos1|bangalore|  newyork|cabin1|2020-01-28|2020-11-28|
+|pos2|  chennai|  chicago|cabin2|2020-01-01|2020-12-31|
+|pos3|  newyork|  chennai|cabin3|2020-02-29|2020-10-28|
+|pos4|  chicago|bangalore|cabin4|2020-12-02|2021-01-31|
+|pos5|    delhi|  chicago|cabin5|2020-01-01|2020-12-31|
+|pos5| banglore|  chicago|cabin5|2020-01-01|2020-12-31|
+|pos5|  chennai|  chicago|cabin5|2020-01-01|2020-12-31|
+|pos6|  chennai|       DC|cabin6|2020-02-01|2020-02-29|
+|pos6|  chennai|  newyork|cabin6|2020-02-01|2020-02-29|
+|pos6|  chennai|  chicago|cabin6|2020-02-01|2020-02-29|
++----+---------+---------+------+----------+----------+
